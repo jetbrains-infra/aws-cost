@@ -31,10 +31,15 @@ type settings struct {
 }
 
 type config struct {
-	Categories []struct {
-		Name     string   `json:"name"`
-		Accounts []string `json:"accounts"`
-	} `json:"categories"`
+	Projects []struct {
+		Name     string          `json:"project_name"`
+		Accounts []accountConfig `json:"accounts"`
+	} `json:"projects"`
+}
+
+type accountConfig struct {
+	Name string `json:"name"`
+	ID   string `json:"id"`
 }
 
 type serviceCost struct {
@@ -146,8 +151,7 @@ func getServiceCost(results *[]costexplorer.ResultByTime) []serviceCost {
 	for _, timePeriod := range *results {
 		for _, group := range timePeriod.Groups {
 			sc = append(sc, serviceCost{
-				AccountID: group.Keys[1],
-				// Region:      region,
+				AccountID:   group.Keys[1],
 				ServiceName: strings.Replace(group.Keys[0], " ", "_", -1),
 				ServiceCost: *group.Metrics["UnblendedCost"].Amount,
 				Timestamp:   timestamp,
@@ -159,16 +163,16 @@ func getServiceCost(results *[]costexplorer.ResultByTime) []serviceCost {
 }
 
 func printInfluxLineProtocol(sc []serviceCost, c config) {
-	if len(c.Categories) > 0 {
+	if len(c.Projects) > 0 {
 		for _, s := range sc {
-			for _, category := range c.Categories {
+			for _, proj := range c.Projects {
 				if exact {
-					if checkElementInArray(category.Accounts, s.AccountID) {
-						fmt.Printf("aws-cost,account_id=%v,service_name=%v,category=%v cost=%v %v\n", s.AccountID, s.ServiceName, category.Name, s.ServiceCost, s.Timestamp)
+					if ok, accountName := checkElementInArray(proj.Accounts, s.AccountID); ok {
+						fmt.Printf("aws-cost,account_id=%v,service_name=%v,project=%v,account_name=%v cost=%v %v\n", s.AccountID, s.ServiceName, proj.Name, accountName, s.ServiceCost, s.Timestamp)
 					}
 				} else {
-					if checkElementInArray(category.Accounts, s.AccountID) {
-						fmt.Printf("aws-cost,account_id=%v,service_name=%v,category=%v cost=%v %v\n", s.AccountID, s.ServiceName, category.Name, s.ServiceCost, s.Timestamp)
+					if ok, accountName := checkElementInArray(proj.Accounts, s.AccountID); ok {
+						fmt.Printf("aws-cost,account_id=%v,service_name=%v,project=%v,account_name=%v cost=%v %v\n", s.AccountID, s.ServiceName, proj.Name, accountName, s.ServiceCost, s.Timestamp)
 					} else {
 						fmt.Printf("aws-cost,account_id=%v,service_name=%v cost=%v %v\n", s.AccountID, s.ServiceName, s.ServiceCost, s.Timestamp)
 					}
@@ -182,13 +186,13 @@ func printInfluxLineProtocol(sc []serviceCost, c config) {
 	}
 }
 
-func checkElementInArray(array []string, e string) bool {
+func checkElementInArray(array []accountConfig, e string) (bool, string) {
 	for _, ae := range array {
-		if ae == e {
-			return true
+		if ae.ID == e {
+			return true, ae.Name
 		}
 	}
-	return false
+	return false, ""
 }
 
 func main() {

@@ -46,15 +46,30 @@ And run:
 ./aws-cost -date 2019-02-12 >> /tmp/aws-cost
 ```
 
-Moreover, you can use additional categories for your account. The idea of this feature is using different accounts in same project. Here is the config for example:
+Moreover, you can use additional tags for your account. The idea of this feature is using different accounts in same project. Here is the config for example:
 ```json
 {
-  "categories": [
+  "projects": [
     {
-      "name": "project1",
+      "project_name": "project1",
       "accounts": [
-        "25***9",
-        "39***2"
+        {
+          "name": "account1",
+          "id": "79...56"
+        },
+        {
+          "name": "account2",
+          "id": "83...80"
+        }
+      ]
+    },
+    {
+      "project_name": "project2",
+      "accounts": [
+        {
+          "name": "account1",
+          "id": "91...78"
+        }
       ]
     }
   ]
@@ -63,8 +78,8 @@ Moreover, you can use additional categories for your account. The idea of this f
 And run:
 ```
 ./aws-cost -config aws-cost.json -exact
-aws-cost,account_id=25***9,service_name=EC2_-_Other,category=project1 cost=1.1900133074 1549756800000000000
-aws-cost,account_id=25***9,service_name=Amazon_Elastic_Compute_Cloud_-_Compute,category=project1 cost=15.1200098849 1549756800000000000
-aws-cost,account_id=25***9,service_name=AmazonCloudWatch,category=project1 cost=0.15 1549756800000000000
+aws-cost,account_id=25***9,service_name=EC2_-_Other,project=project1 cost=1.1900133074 1549756800000000000
+aws-cost,account_id=25***9,service_name=Amazon_Elastic_Compute_Cloud_-_Compute,project=project1 cost=15.1200098849 1549756800000000000
+aws-cost,account_id=25***9,service_name=AmazonCloudWatch,project=project1 cost=0.15 1549756800000000000
 ```
-It's not necessary to use flag `-exact` with `-config`.
+It's not required to use flag `-exact` with `-config`.
