@@ -1,4 +1,4 @@
-aws-cost [![Go Report Card](https://goreportcard.com/badge/github.com/jetbrains-infra/aws-cost)](https://goreportcard.com/report/github.com/jetbrains-infra/aws-cost) [https://img.shields.io/docker/pulls/vebeer/urlsh.svg](https://img.shields.io/docker/pulls/vebeer/urlsh.svg)
+aws-cost [![Go Report Card](https://goreportcard.com/badge/github.com/jetbrains-infra/aws-cost)](https://goreportcard.com/report/github.com/jetbrains-infra/aws-cost) [![https://img.shields.io/docker/pulls/vebeer/urlsh.svg]](https://img.shields.io/docker/pulls/vebeer/urlsh.svg)
 =====
 
 This utility gets AWS billing data from [AWS Cost-Explorer](https://aws.amazon.com/aws-cost-management/aws-cost-explorer/) and return it as an influx line protocol that can be imported by [telegraf](https://github.com/influxdata/telegraf)
