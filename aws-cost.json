@@ -1,10 +1,25 @@
 {
-  "categories": [
+  "projects": [
     {
-      "name": "category1",
+      "project_name": "project1",
       "accounts": [
-        "25***9",
-        "39***2"
+        {
+          "name": "account1",
+          "id": "79...56"
+        },
+        {
+          "name": "account2",
+          "id": "83...80"
+        }
+      ]
+    },
+    {
+      "project_name": "project2",
+      "accounts": [
+        {
+          "name": "account1",
+          "id": "91...78"
+        }
       ]
     }
   ]
