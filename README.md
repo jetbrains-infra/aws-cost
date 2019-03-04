@@ -1,4 +1,4 @@
-aws-cost [![Go Report Card](https://goreportcard.com/badge/github.com/jetbrains-infra/aws-cost)](https://goreportcard.com/report/github.com/jetbrains-infra/aws-cost) [![Pulls](https://img.shields.io/docker/pulls/jetbrainsinfra/aws-cost.svg)](https://img.shields.io/docker/pulls/jetbrainsinfra/aws-cost.svg)
+aws-cost [![Go Report Card](https://goreportcard.com/badge/github.com/jetbrains-infra/aws-cost)](https://goreportcard.com/report/github.com/jetbrains-infra/aws-cost) [![Pulls](https://img.shields.io/docker/pulls/jetbrainsinfra/aws-cost.svg)](https://hub.docker.com/r/jetbrainsinfra/aws-cost)
 =====
 
 This utility gets AWS billing data from [AWS Cost-Explorer](https://aws.amazon.com/aws-cost-management/aws-cost-explorer/) and return it as an influx line protocol that can be imported by [telegraf](https://github.com/influxdata/telegraf)
@@ -85,8 +85,7 @@ aws-cost,account_id=25***9,service_name=AmazonCloudWatch,project=project1 cost=0
 It's not required to use flag `-exact` with `-config`.
 
 ### Docker example
-Docker image is located [here](https://cloud.docker.com/u/jetbrainsinfra/repository/docker/jetbrainsinfra/aws-cost)
-
+Docker image is located [here](https://hub.docker.com/r/jetbrainsinfra/aws-cost).
 ```
 $ docker run -it --rm \
   -e AWS_ACCESS_KEY_ID=AKI... \
