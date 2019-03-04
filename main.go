@@ -22,6 +22,10 @@ var (
 	secretKey  string
 	configFile string
 	exact      bool
+	logLevel   string
+
+	debugLogger *log.Logger
+	traceLogger *log.Logger
 )
 
 type settings struct {
@@ -55,6 +59,7 @@ func init() {
 	flag.StringVar(&secretKey, "secret", "", "AWS secret key(by default will be taken from env AWS_SECRET_KEY)")
 	flag.StringVar(&configFile, "config", "", "config file")
 	flag.BoolVar(&exact, "exact", false, "show only accounts from config file")
+	flag.StringVar(&logLevel, "log", "", "log level(only 'debug' is supported right now)")
 
 	flag.Parse()
 
@@ -80,13 +85,23 @@ func init() {
 		yesterday := time.Now().AddDate(0, 0, -1)
 		date = yesterday.Format("2006-01-02")
 	}
+
+	debugLogger = log.New(ioutil.Discard, "", -1)
+	traceLogger = log.New(ioutil.Discard, "", -1)
+	if logLevel == "debug" {
+		debugLogger = log.New(os.Stdout, "DEBUG:", log.Ldate|log.Ltime|log.Lshortfile)
+	} else if logLevel == "trace" {
+		debugLogger = log.New(os.Stdout, "DEBUG:", log.Ldate|log.Ltime|log.Lshortfile)
+		traceLogger = log.New(os.Stdout, "TRACE:", log.Ldate|log.Lmicroseconds|log.Lshortfile)
+	}
 }
 
 func loadConfig(path string) (config, error) {
-	var (
-		c   config
-		err error
-	)
+	var c config
+	var err error
+
+	debugLogger.Printf("load config: %v\n", path)
+
 	file, err := ioutil.ReadFile(path)
 	if err != nil {
 		return c, fmt.Errorf("can't load config: %v", err)
@@ -97,12 +112,15 @@ func loadConfig(path string) (config, error) {
 		return c, fmt.Errorf("can't unmarshal config: %v", err)
 	}
 
+	debugLogger.Printf("config loaded\n")
 	return c, err
 }
 
 func getDataFromAWS(a *settings) (*[]costexplorer.ResultByTime, error) {
 	var err error
 	groupDefinitions := []string{"SERVICE", "LINKED_ACCOUNT"}
+
+	debugLogger.Printf("collecting data from AWS\n")
 
 	t, _ := time.Parse("2006-01-02", date)
 	end := t.AddDate(0, 0, 1).Format("2006-01-02")
@@ -140,6 +158,7 @@ func getDataFromAWS(a *settings) (*[]costexplorer.ResultByTime, error) {
 		return nil, fmt.Errorf("failed to do request, %v", err)
 	}
 
+	debugLogger.Printf("collected %v items from AWS\n", len(data.ResultsByTime[0].Groups))
 	return &data.ResultsByTime, err
 }
 
@@ -162,44 +181,53 @@ func getServiceCost(results *[]costexplorer.ResultByTime) []serviceCost {
 	return sc
 }
 
-func printInfluxLineProtocol(sc []serviceCost, c config) {
-	if len(c.Projects) > 0 {
-		for _, s := range sc {
-			for _, proj := range c.Projects {
-				if exact {
-					if ok, accountName := checkElementInArray(proj.Accounts, s.AccountID); ok {
-						fmt.Printf("aws-cost,account_id=%v,service_name=%v,project=%v,account_name=%v cost=%v %v\n", s.AccountID, s.ServiceName, proj.Name, accountName, s.ServiceCost, s.Timestamp)
-					}
+func printInfluxLineProtocol(servicesFromAWS []serviceCost, c config) {
+	debugLogger.Printf("printing result in Influx Line Protocol\n")
+	if len(c.Projects) == 0 {
+		for _, s := range servicesFromAWS {
+			fmt.Printf("aws-cost,account_id=%v,service_name=%v cost=%v %v\n", s.AccountID, s.ServiceName, s.ServiceCost, s.Timestamp)
+		}
+	} else {
+		for _, s := range servicesFromAWS {
+			//traceLogger.Printf("printInfluxLineProtocol(aws account id = %v):\n", s.AccountID)
+			if exact {
+				if ok, projectName, accountName := checkElementInArray(c, s.AccountID); ok {
+					// traceLogger.Printf("printInfluxLineProtocol(aws account id = %v, project from cfg = %v):\n", s.AccountID, c)
+					// traceLogger.Printf("\texact, ok\n")
+					fmt.Printf("aws-cost,account_id=%v,service_name=%v,project=%v,account_name=%v cost=%v %v\n", s.AccountID, s.ServiceName, projectName, accountName, s.ServiceCost, s.Timestamp)
+				}
+			} else {
+				if ok, projectName, accountName := checkElementInArray(c, s.AccountID); ok {
+					// traceLogger.Printf("printInfluxLineProtocol(aws account id = %v, project from cfg = %v):\n", s.AccountID, c)
+					// traceLogger.Printf("\tnot exact, ok\n")
+					fmt.Printf("aws-cost,account_id=%v,service_name=%v,project=%v,account_name=%v cost=%v %v\n", s.AccountID, s.ServiceName, projectName, accountName, s.ServiceCost, s.Timestamp)
 				} else {
-					if ok, accountName := checkElementInArray(proj.Accounts, s.AccountID); ok {
-						fmt.Printf("aws-cost,account_id=%v,service_name=%v,project=%v,account_name=%v cost=%v %v\n", s.AccountID, s.ServiceName, proj.Name, accountName, s.ServiceCost, s.Timestamp)
-					} else {
-						fmt.Printf("aws-cost,account_id=%v,service_name=%v cost=%v %v\n", s.AccountID, s.ServiceName, s.ServiceCost, s.Timestamp)
-					}
+					// traceLogger.Printf("printInfluxLineProtocol(aws account id = %v, project from cfg = %v):\n", s.AccountID, projectName)
+					// traceLogger.Printf("\tnot exact, not ok\n")
+					fmt.Printf("aws-cost,account_id=%v,service_name=%v cost=%v %v\n", s.AccountID, s.ServiceName, s.ServiceCost, s.Timestamp)
 				}
 			}
 		}
-	} else {
-		for _, s := range sc {
-			fmt.Printf("aws-cost,account_id=%v,service_name=%v cost=%v %v\n", s.AccountID, s.ServiceName, s.ServiceCost, s.Timestamp)
-		}
 	}
 }
 
-func checkElementInArray(array []accountConfig, e string) (bool, string) {
-	for _, ae := range array {
-		if ae.ID == e {
-			return true, ae.Name
+func checkElementInArray(projects config, element string) (bool, string, string) {
+	//traceLogger.Printf("checkElementInArray, element = %v:\n", element)
+	for _, proj := range projects.Projects {
+		for _, arrayElement := range proj.Accounts {
+			//traceLogger.Printf("\tarrayElement = %v\n", arrayElement)
+			if arrayElement.ID == element {
+				//traceLogger.Printf("\t\tMATCH\n")
+				return true, proj.Name, arrayElement.Name
+			}
 		}
 	}
-	return false, ""
+	return false, "", ""
 }
 
 func main() {
-	var (
-		c   config
-		err error
-	)
+	var c config
+	var err error
 
 	if configFile != "" {
 		c, err = loadConfig(configFile)
