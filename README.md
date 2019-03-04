@@ -1,4 +1,4 @@
-aws-cost [![Go Report Card](https://goreportcard.com/badge/github.com/jetbrains-infra/aws-cost)](https://goreportcard.com/report/github.com/jetbrains-infra/aws-cost)
+aws-cost [![Go Report Card](https://goreportcard.com/badge/github.com/jetbrains-infra/aws-cost)](https://goreportcard.com/report/github.com/jetbrains-infra/aws-cost) [https://img.shields.io/docker/pulls/vebeer/urlsh.svg](https://img.shields.io/docker/pulls/vebeer/urlsh.svg)
 =====
 
 This utility gets AWS billing data from [AWS Cost-Explorer](https://aws.amazon.com/aws-cost-management/aws-cost-explorer/) and return it as an influx line protocol that can be imported by [telegraf](https://github.com/influxdata/telegraf)
@@ -83,3 +83,16 @@ aws-cost,account_id=25***9,service_name=Amazon_Elastic_Compute_Cloud_-_Compute,p
 aws-cost,account_id=25***9,service_name=AmazonCloudWatch,project=project1 cost=0.15 1549756800000000000
 ```
 It's not required to use flag `-exact` with `-config`.
+
+### Docker example
+Docker image is located [here](https://cloud.docker.com/u/jetbrainsinfra/repository/docker/jetbrainsinfra/aws-cost)
+
+```
+$ docker run -it --rm \
+  -e AWS_ACCESS_KEY_ID=AKI... \
+  -e AWS_SECRET_KEY=9eg... \
+  -v $(pwd):/app/config \
+  jetbrainsinfra/aws-cost:latest \
+  -date 2019-02-26 \
+  -config /app/config/aws-cost-test.json -exact
+```
