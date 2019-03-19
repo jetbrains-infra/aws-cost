@@ -1,4 +1,4 @@
 .idea/
 bin/
-aws-cost-test.json
+*.json
 cost
