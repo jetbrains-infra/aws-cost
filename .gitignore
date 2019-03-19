@@ -1,4 +1,4 @@
 .idea/
-aws-cost
+bin/
 aws-cost-test.json
 cost

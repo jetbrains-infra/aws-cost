@@ -34,16 +34,17 @@ type settings struct {
 	Date         string `json:"date"`
 }
 
-type config struct {
-	Projects []struct {
-		Name     string          `json:"project_name"`
-		Accounts []accountConfig `json:"accounts"`
-	} `json:"projects"`
+type Config struct {
+	Accounts []struct {
+		Name string `json:"name"`
+		ID   string `json:"id"`
+		Tags []tags `json:"tags,omitempty"`
+	} `json:"accounts"`
 }
 
-type accountConfig struct {
-	Name string `json:"name"`
-	ID   string `json:"id"`
+type tags struct {
+	TagName  string `json:"name"`
+	TagValue string `json:"value"`
 }
 
 type serviceCost struct {
@@ -96,8 +97,8 @@ func init() {
 	}
 }
 
-func loadConfig(path string) (config, error) {
-	var c config
+func loadConfig(path string) (Config, error) {
+	var c Config
 	var err error
 
 	debugLogger.Printf("load config: %v\n", path)
@@ -177,56 +178,56 @@ func getServiceCost(results *[]costexplorer.ResultByTime) []serviceCost {
 			})
 		}
 	}
-
 	return sc
 }
 
-func printInfluxLineProtocol(servicesFromAWS []serviceCost, c config) {
+func printInfluxLineProtocol(servicesFromAWS []serviceCost, c Config) {
 	debugLogger.Printf("printing result in Influx Line Protocol\n")
-	if len(c.Projects) == 0 {
+	if len(c.Accounts) == 0 {
 		for _, s := range servicesFromAWS {
 			fmt.Printf("aws-cost,account_id=%v,service_name=%v cost=%v %v\n", s.AccountID, s.ServiceName, s.ServiceCost, s.Timestamp)
 		}
 	} else {
 		for _, s := range servicesFromAWS {
-			//traceLogger.Printf("printInfluxLineProtocol(aws account id = %v):\n", s.AccountID)
 			if exact {
-				if ok, projectName, accountName := checkElementInArray(c, s.AccountID); ok {
-					// traceLogger.Printf("printInfluxLineProtocol(aws account id = %v, project from cfg = %v):\n", s.AccountID, c)
-					// traceLogger.Printf("\texact, ok\n")
-					fmt.Printf("aws-cost,account_id=%v,service_name=%v,project=%v,account_name=%v cost=%v %v\n", s.AccountID, s.ServiceName, projectName, accountName, s.ServiceCost, s.Timestamp)
+				if ok, accountName, accountTags := checkElementInArray(c, s.AccountID); ok {
+					fmt.Printf("aws-cost,account_id=%v,account_name=%v,service_name=%v%v cost=%v %v\n", s.AccountID, accountName, s.ServiceName, accountTags, s.ServiceCost, s.Timestamp)
 				}
 			} else {
-				if ok, projectName, accountName := checkElementInArray(c, s.AccountID); ok {
-					// traceLogger.Printf("printInfluxLineProtocol(aws account id = %v, project from cfg = %v):\n", s.AccountID, c)
-					// traceLogger.Printf("\tnot exact, ok\n")
-					fmt.Printf("aws-cost,account_id=%v,service_name=%v,project=%v,account_name=%v cost=%v %v\n", s.AccountID, s.ServiceName, projectName, accountName, s.ServiceCost, s.Timestamp)
+				if ok, accountName, accountTags := checkElementInArray(c, s.AccountID); ok {
+					fmt.Printf("aws-cost,account_id=%v,account_name=%v,service_name=%v%v cost=%v %v\n", s.AccountID, accountName, s.ServiceName, accountTags, s.ServiceCost, s.Timestamp)
 				} else {
-					// traceLogger.Printf("printInfluxLineProtocol(aws account id = %v, project from cfg = %v):\n", s.AccountID, projectName)
-					// traceLogger.Printf("\tnot exact, not ok\n")
-					fmt.Printf("aws-cost,account_id=%v,service_name=%v cost=%v %v\n", s.AccountID, s.ServiceName, s.ServiceCost, s.Timestamp)
+					fmt.Printf("aws-cost,account_id=%v,account_name=%v,service_name=%v cost=%v %v\n", s.AccountID, accountName, s.ServiceName, s.ServiceCost, s.Timestamp)
 				}
 			}
 		}
 	}
 }
 
-func checkElementInArray(projects config, element string) (bool, string, string) {
-	//traceLogger.Printf("checkElementInArray, element = %v:\n", element)
-	for _, proj := range projects.Projects {
-		for _, arrayElement := range proj.Accounts {
-			//traceLogger.Printf("\tarrayElement = %v\n", arrayElement)
-			if arrayElement.ID == element {
-				//traceLogger.Printf("\t\tMATCH\n")
-				return true, proj.Name, arrayElement.Name
-			}
+func checkElementInArray(config Config, element string) (bool, string, string) {
+	for _, acc := range config.Accounts {
+		if acc.ID == element {
+			name := strings.Replace(acc.Name, " ", "_", -1)
+			tags := getStringWithTags(acc.Tags)
+			return true, name, tags
 		}
 	}
 	return false, "", ""
 }
 
+func getStringWithTags(accountTags []tags) string {
+	tags := ""
+	for _, tag := range accountTags {
+		tags += fmt.Sprintf(",%s=%s", tag.TagName, tag.TagValue)
+	}
+
+	ret := strings.Replace(tags, " ", "_", -1)
+
+	return ret
+}
+
 func main() {
-	var c config
+	var c Config
 	var err error
 
 	if configFile != "" {

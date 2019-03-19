@@ -49,26 +49,18 @@ And run:
 Moreover, you can use additional tags for your account. The idea of this feature is using different accounts in same project. Here is the config for example:
 ```json
 {
-  "projects": [
+  "accounts": [
     {
-      "project_name": "project1",
-      "accounts": [
+      "name": "",
+      "id": "",
+      "tags": [
         {
-          "name": "account1",
-          "id": "79...56"
+          "name": "",
+          "value": ""
         },
         {
-          "name": "account2",
-          "id": "83...80"
-        }
-      ]
-    },
-    {
-      "project_name": "project2",
-      "accounts": [
-        {
-          "name": "account1",
-          "id": "91...78"
+          "name": "",
+          "value": ""
         }
       ]
     }
@@ -95,3 +87,4 @@ $ docker run -it --rm \
   -date 2019-02-26 \
   -config /app/config/aws-cost-test.json -exact
 ```
+ 
