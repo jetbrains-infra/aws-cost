@@ -3,31 +3,56 @@ aws-cost [![Go Report Card](https://goreportcard.com/badge/github.com/jetbrains-
 
 This utility gets AWS billing data from [AWS Cost-Explorer](https://aws.amazon.com/aws-cost-management/aws-cost-explorer/) and return it as an influx line protocol that can be imported by [telegraf](https://github.com/influxdata/telegraf)
 
-### Build
+### TL;DR - Docker example
+Docker image is located [here](https://hub.docker.com/r/jetbrainsinfra/aws-cost).
+```bash
+$ docker run -it --rm \
+  -e AWS_ACCESS_KEY_ID=AKI... \
+  -e AWS_SECRET_KEY=9eg... \
+  -v $(pwd):/app/config \
+  jetbrainsinfra/aws-cost
 ```
+
+### Build
+```bash
 $ go biuld main.go
 ```
 
-### Examples
-By default will be used *yesterday* as date, but you can specify these values as you wish.
+### Use
+At first you have to ensure, your AWS credentials have the following permissions:
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "VisualEditor0",
+            "Effect": "Allow",
+            "Action": [
+                "ce:GetReservationUtilization",
+                "ce:GetDimensionValues",
+                "ce:GetCostAndUsage",
+                "ce:GetTags"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
+```
 
-```
-$ ./aws-cost -key-id AKI... -secret 9eg...
-aws-cost,account_id=25***9,service_name=EC2_-_Other cost=0.7933431449 1550361600000000000
-aws-cost,account_id=25***9,service_name=Amazon_Elastic_Compute_Cloud_-_Compute cost=11.3400006485 1550361600000000000
-aws-cost,account_id=25***9,service_name=AmazonCloudWatch cost=0.1 1550361600000000000
-```
-
-Or key ID and secret ID may be taken from environment variables:
-```
+AWS Key ID and Secret ID may be taken from environment variables or from parameters of command line:
+```bash
 $ export AWS_ACCESS_KEY_ID=AKI...
 $ export AWS_SECRET_KEY=9eg...
 $ ./aws-cost
 ```
-
-Also you can specify the report date:
+or:
+```bash
+$ ./aws-cost -key-id AKI... -secret 9eg... 
 ```
-./aws-cost -key-id AKI... -secret 9eg... -date 2019-02-10
+
+By default will be used *yesterday* as date, but you can specify date with `-date` parameter(`YYYY-MM-DD` format):
+```bash
+./aws-cost -date 2019-02-10
 aws-cost,account_id=25***9,service_name=EC2_-_Other cost=1.1900133074 1549756800000000000
 aws-cost,account_id=25***9,service_name=Amazon_Elastic_Compute_Cloud_-_Compute cost=15.1200098849 1549756800000000000
 aws-cost,account_id=25***9,service_name=AmazonCloudWatch cost=0.15 1549756800000000000
@@ -46,45 +71,28 @@ And run:
 ./aws-cost -date 2019-02-12 >> /tmp/aws-cost
 ```
 
-Moreover, you can use additional tags for your account. The idea of this feature is using different accounts in same project. Here is the config for example:
+### Tags
+
+You can use additional tags for your account. The idea of this feature is using different accounts in same project. Here is the config for example:
 ```json
 {
   "accounts": [
     {
-      "name": "",
-      "id": "",
-      "tags": [
-        {
-          "name": "",
-          "value": ""
-        },
-        {
-          "name": "",
-          "value": ""
-        }
-      ]
+      "name": "main production account",
+      "id": "12313...9",
+      "tags": {
+          "environment": "prod",
+          "project": "website"
+      }
     }
   ]
 }
 ```
 And run:
-```
+```bash
 ./aws-cost -config aws-cost.json -exact
-aws-cost,account_id=25***9,service_name=EC2_-_Other,project=project1 cost=1.1900133074 1549756800000000000
-aws-cost,account_id=25***9,service_name=Amazon_Elastic_Compute_Cloud_-_Compute,project=project1 cost=15.1200098849 1549756800000000000
-aws-cost,account_id=25***9,service_name=AmazonCloudWatch,project=project1 cost=0.15 1549756800000000000
+aws-cost,account_id=12313...9,account_name=main,service_name=EC2_-_Other,environment=prod,project=website cost=1.1900133074 1549756800000000000
+aws-cost,account_id=12313...9,account_name=main,service_name=Amazon_Elastic_Compute_Cloud_-_Compute,environment=prod,project=website cost=15.1200098849 1549756800000000000
+aws-cost,account_id=12313...9,account_name=main,service_name=AmazonCloudWatch,environment=prod,project=website cost=0.15 1549756800000000000
 ```
-It's not required to use flag `-exact` with `-config`.
-
-### Docker example
-Docker image is located [here](https://hub.docker.com/r/jetbrainsinfra/aws-cost).
-```
-$ docker run -it --rm \
-  -e AWS_ACCESS_KEY_ID=AKI... \
-  -e AWS_SECRET_KEY=9eg... \
-  -v $(pwd):/app/config \
-  jetbrainsinfra/aws-cost:latest \
-  -date 2019-02-26 \
-  -config /app/config/aws-cost-test.json -exact
-```
- 
+Also, it's not required to use flag `-exact` with `-config` but with `-exact` you will get only accouts that exists in `aws-cost.json`.

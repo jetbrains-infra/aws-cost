@@ -36,15 +36,10 @@ type settings struct {
 
 type Config struct {
 	Accounts []struct {
-		Name string `json:"name"`
-		ID   string `json:"id"`
-		Tags []tags `json:"tags,omitempty"`
+		Name string            `json:"name"`
+		ID   string            `json:"id"`
+		Tags map[string]string `json:"tags,omitempty"`
 	} `json:"accounts"`
-}
-
-type tags struct {
-	TagName  string `json:"name"`
-	TagValue string `json:"value"`
 }
 
 type serviceCost struct {
@@ -59,8 +54,8 @@ func init() {
 	flag.StringVar(&keyID, "key-id", "", "AWS key ID(by default will be taken from env AWS_ACCESS_KEY_ID)")
 	flag.StringVar(&secretKey, "secret", "", "AWS secret key(by default will be taken from env AWS_SECRET_KEY)")
 	flag.StringVar(&configFile, "config", "", "config file")
-	flag.BoolVar(&exact, "exact", false, "show only accounts from config file")
 	flag.StringVar(&logLevel, "log", "", "log level(only 'debug' is supported right now)")
+	flag.BoolVar(&exact, "exact", false, "show only accounts from config file")
 
 	flag.Parse()
 
@@ -215,10 +210,10 @@ func checkElementInArray(config Config, element string) (bool, string, string) {
 	return false, "", ""
 }
 
-func getStringWithTags(accountTags []tags) string {
+func getStringWithTags(accountTags map[string]string) string {
 	tags := ""
-	for _, tag := range accountTags {
-		tags += fmt.Sprintf(",%s=%s", tag.TagName, tag.TagValue)
+	for tag := range accountTags {
+		tags += fmt.Sprintf(",%s=%s", tag, accountTags[tag])
 	}
 
 	ret := strings.Replace(tags, " ", "_", -1)
