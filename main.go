@@ -200,6 +200,9 @@ func printInfluxLineProtocol(servicesFromAWS []serviceCost, c Config) {
 }
 
 func checkElementInArray(config Config, element string) (bool, string, string) {
+	if element[0] == '0' {
+		element = element[1:]
+	}
 	for _, acc := range config.Accounts {
 		if acc.ID == element {
 			name := strings.Replace(acc.Name, " ", "_", -1)
