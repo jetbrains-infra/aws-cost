@@ -42,11 +42,6 @@ type Config struct {
 	} `json:"accounts"`
 }
 
-type tags struct {
-	TagName  string `json:"name"`
-	TagValue string `json:"value"`
-}
-
 type serviceCost struct {
 	AccountID   string `json:"account_id"`
 	ServiceName string `json:"service_name"`
