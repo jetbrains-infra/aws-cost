@@ -21,9 +21,11 @@ var (
 	keyID      string
 	secretKey  string
 	configFile string
+	resultPath string
 	exact      bool
 	logLevel   string
 
+	resultFile  *os.File
 	debugLogger *log.Logger
 	traceLogger *log.Logger
 )
@@ -50,10 +52,13 @@ type serviceCost struct {
 }
 
 func init() {
+	var err error
+
 	flag.StringVar(&date, "date", "", "date in format yyyy-MM-dd, (by default will be set as yesterday)")
 	flag.StringVar(&keyID, "key-id", "", "AWS key ID(by default will be taken from env AWS_ACCESS_KEY_ID)")
 	flag.StringVar(&secretKey, "secret", "", "AWS secret key(by default will be taken from env AWS_SECRET_KEY)")
 	flag.StringVar(&configFile, "config", "", "config file")
+	flag.StringVar(&resultPath, "result", "", "result file")
 	flag.StringVar(&logLevel, "log", "", "log level(only 'debug' is supported right now)")
 	flag.BoolVar(&exact, "exact", false, "show only accounts from config file")
 
@@ -80,6 +85,14 @@ func init() {
 	if date == "" {
 		yesterday := time.Now().AddDate(0, 0, -1)
 		date = yesterday.Format("2006-01-02")
+	}
+
+	resultFile = os.Stdout
+	if resultPath != "" {
+		resultFile, err = os.OpenFile(resultPath, os.O_RDWR, 0666)
+		if err != nil {
+			log.Fatalf("failed opening file: %s", err)
+		}
 	}
 
 	debugLogger = log.New(ioutil.Discard, "", -1)
@@ -180,19 +193,19 @@ func printInfluxLineProtocol(servicesFromAWS []serviceCost, c Config) {
 	debugLogger.Printf("printing result in Influx Line Protocol\n")
 	if len(c.Accounts) == 0 {
 		for _, s := range servicesFromAWS {
-			fmt.Printf("aws-cost,account_id=%v,service_name=%v cost=%v %v\n", s.AccountID, s.ServiceName, s.ServiceCost, s.Timestamp)
+			fmt.Fprintf(resultFile, "aws-cost,account_id=%v,service_name=%v cost=%v %v\n", s.AccountID, s.ServiceName, s.ServiceCost, s.Timestamp)
 		}
 	} else {
 		for _, s := range servicesFromAWS {
 			if exact {
 				if ok, accountName, accountTags := checkElementInArray(c, s.AccountID); ok {
-					fmt.Printf("aws-cost,account_id=%v,account_name=%v,service_name=%v%v cost=%v %v\n", s.AccountID, accountName, s.ServiceName, accountTags, s.ServiceCost, s.Timestamp)
+					fmt.Fprintf(resultFile, "aws-cost,account_id=%v,account_name=%v,service_name=%v%v cost=%v %v\n", s.AccountID, accountName, s.ServiceName, accountTags, s.ServiceCost, s.Timestamp)
 				}
 			} else {
 				if ok, accountName, accountTags := checkElementInArray(c, s.AccountID); ok {
-					fmt.Printf("aws-cost,account_id=%v,account_name=%v,service_name=%v%v cost=%v %v\n", s.AccountID, accountName, s.ServiceName, accountTags, s.ServiceCost, s.Timestamp)
+					fmt.Fprintf(resultFile, "aws-cost,account_id=%v,account_name=%v,service_name=%v%v cost=%v %v\n", s.AccountID, accountName, s.ServiceName, accountTags, s.ServiceCost, s.Timestamp)
 				} else {
-					fmt.Printf("aws-cost,account_id=%v,account_name=%v,service_name=%v cost=%v %v\n", s.AccountID, accountName, s.ServiceName, s.ServiceCost, s.Timestamp)
+					fmt.Fprintf(resultFile, "aws-cost,account_id=%v,account_name=%v,service_name=%v cost=%v %v\n", s.AccountID, accountName, s.ServiceName, s.ServiceCost, s.Timestamp)
 				}
 			}
 		}
@@ -227,6 +240,7 @@ func getStringWithTags(accountTags map[string]string) string {
 func main() {
 	var c Config
 	var err error
+	defer resultFile.Close()
 
 	if configFile != "" {
 		c, err = loadConfig(configFile)
