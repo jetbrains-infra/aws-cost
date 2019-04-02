@@ -89,7 +89,7 @@ func init() {
 
 	resultFile = os.Stdout
 	if resultPath != "" {
-		resultFile, err = os.OpenFile(resultPath, os.O_RDWR, 0666)
+		resultFile, err = os.OpenFile(resultPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
 		if err != nil {
 			log.Fatalf("failed opening file: %s", err)
 		}
