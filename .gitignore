@@ -1,6 +1,7 @@
 .idea/
 bin/
 *.json
+*.txt
 cost
 aws-cost
 result.txt

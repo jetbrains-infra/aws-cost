@@ -25,6 +25,9 @@ var (
 	exact      bool
 	logLevel   string
 
+	tagsList   []string
+	defaultTag = "Unknown"
+
 	resultFile  *os.File
 	debugLogger *log.Logger
 	traceLogger *log.Logger
@@ -122,8 +125,27 @@ func loadConfig(path string) (Config, error) {
 		return c, fmt.Errorf("can't unmarshal config: %v", err)
 	}
 
+	for _, acc := range c.Accounts {
+		if len(acc.Tags) > 0 {
+			for t := range acc.Tags {
+				_ = addTags(t)
+			}
+		}
+	}
+
 	debugLogger.Printf("config loaded\n")
 	return c, err
+}
+
+func addTags(tag string) bool {
+	for _, t := range tagsList {
+		if t == tag {
+			return false
+		}
+	}
+	tagsList = append(tagsList, tag)
+
+	return true
 }
 
 func getDataFromAWS(a *settings) (*[]costexplorer.ResultByTime, error) {
@@ -219,8 +241,21 @@ func checkElementInArray(config Config, element string) (bool, string, string) {
 	}
 	for _, acc := range config.Accounts {
 		if acc.ID == element {
+			currentTags := acc.Tags
+			if currentTags == nil {
+				currentTags = make(map[string]string)
+			}
+			if len(currentTags) != len(tagsList) {
+				for _, t := range tagsList {
+					if _, elementExist := currentTags[t]; !elementExist {
+						debugLogger.Println(currentTags, t, defaultTag)
+						currentTags[t] = defaultTag
+					}
+				}
+			}
+
 			name := strings.Replace(acc.Name, " ", "_", -1)
-			tags := getStringWithTags(acc.Tags)
+			tags := getStringWithTags(currentTags)
 			return true, name, tags
 		}
 	}
