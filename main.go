@@ -213,7 +213,7 @@ func getServiceCost(results *[]costexplorer.ResultByTime) []serviceCost {
 }
 
 func printInfluxLineProtocol(servicesFromAWS []serviceCost, c Config) {
-	debugLogger.Printf("printing result in Influx Line Protocol\n")
+	debugLogger.Printf("printing result in Influx Line Protocol to %s\n", resultFile.Name())
 	if len(c.Accounts) == 0 {
 		for _, s := range servicesFromAWS {
 			fmt.Fprintf(resultFile, "aws-cost,account_id=%v,service_name=%v cost=%v %v\n", s.AccountID, s.ServiceName, s.ServiceCost, s.Timestamp)
@@ -248,7 +248,7 @@ func checkElementInArray(config Config, element string) (bool, string, string) {
 			if len(currentTags) != len(tagsList) {
 				for _, t := range tagsList {
 					if _, elementExist := currentTags[t]; !elementExist {
-						debugLogger.Println(currentTags, t, defaultTag)
+						//debugLogger.Println(currentTags, t, defaultTag)
 						currentTags[t] = defaultTag
 					}
 				}
