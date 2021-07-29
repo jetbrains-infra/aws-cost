@@ -17,20 +17,21 @@ import (
 )
 
 var (
-	date       			string
-	keyID      			string
-	secretKey  			string
-	configFile 			string
-	resultPath 			string
-	exact      			bool
-	logLevel   			string
-	region				string
-	tagsList   			[]string
-	defaultTag = 		"Unknown"
+	date       				string
+	keyID      				string
+	secretKey  				string
+	configFile 				string
+	resultPath 				string
+	exact      				bool
+	logLevel   				string
+	region					string
+	tagsList   				[]string
+	groupDefinitionLabels	[]groupDefinitionLabel
+	defaultTag = 			"Unknown"
 
-	resultFile  		*os.File
-	debugLogger 		*log.Logger
-	traceLogger 		*log.Logger
+	resultFile  			*os.File
+	debugLogger 			*log.Logger
+	traceLogger 			*log.Logger
 )
 
 type settings struct {
@@ -48,10 +49,15 @@ type Config struct {
 }
 
 type serviceCost struct {
-	AccountID   string `json:"account_id"`
-	ServiceName string `json:"service_name"`
+	SecondGroupKey   string `json:"second_group_key"`
+	FirstGroupKey string `json:"first_group_key"`
 	ServiceCost string `json:"service_cost"`
 	Timestamp   string `json:"timestamp"`
+}
+
+type groupDefinitionLabel struct {
+	groupId   	string
+	label		string
 }
 
 func init() {
@@ -97,6 +103,16 @@ func init() {
 		if err != nil {
 			log.Fatalf("failed opening file: %s", err)
 		}
+	}
+
+	groupDefinitionLabels = make([]groupDefinitionLabel,2)
+	groupDefinitionLabels[0] = groupDefinitionLabel{
+		groupId: "SERVICE",
+		label: "service_name",
+	}
+	groupDefinitionLabels[1] = groupDefinitionLabel{
+		groupId: "LINKED_ACCOUNT",
+		label: "account_name",
 	}
 
 	debugLogger = log.New(ioutil.Discard, "", -1)
@@ -152,7 +168,6 @@ func addTags(tag string) bool {
 func getDataFromAWS(a *settings) (*[]types.ResultByTime, error) {
 	var err error
 	var ctx = context.TODO()
-	groupDefinitions := []string{"SERVICE", "LINKED_ACCOUNT"}
 
 	debugLogger.Printf("collecting data from AWS\n")
 
@@ -168,10 +183,10 @@ func getDataFromAWS(a *settings) (*[]types.ResultByTime, error) {
 		Metrics:     []string{"UnblendedCost"},
 		GroupBy: []types.GroupDefinition{{
 			Type: "DIMENSION",
-			Key:  &groupDefinitions[0],
+			Key:  &groupDefinitionLabels[0].groupId,
 		}, {
 			Type: "DIMENSION",
-			Key:  &groupDefinitions[1],
+			Key:  &groupDefinitionLabels[1].groupId,
 		}},
 		TimePeriod: &types.DateInterval{
 			Start: &date,
@@ -195,8 +210,8 @@ func getServiceCost(results *[]types.ResultByTime) []serviceCost {
 	for _, timePeriod := range *results {
 		for _, group := range timePeriod.Groups {
 			sc = append(sc, serviceCost{
-				AccountID:   group.Keys[1],
-				ServiceName: strings.Replace(group.Keys[0], " ", "_", -1),
+				SecondGroupKey:   group.Keys[1],
+				FirstGroupKey: strings.Replace(group.Keys[0], " ", "_", -1),
 				ServiceCost: *group.Metrics["UnblendedCost"].Amount,
 				Timestamp:   timestamp,
 			})
@@ -209,19 +224,51 @@ func printInfluxLineProtocol(servicesFromAWS []serviceCost, c Config) {
 	debugLogger.Printf("printing result in Influx Line Protocol to %s\n", resultFile.Name())
 	if len(c.Accounts) == 0 {
 		for _, s := range servicesFromAWS {
-			fmt.Fprintf(resultFile, "aws-cost,account_id=%v,service_name=%v cost=%v %v\n", s.AccountID, s.ServiceName, s.ServiceCost, s.Timestamp)
+			fmt.Fprintf(resultFile,
+				"aws-cost,%v=%v,%v=%v cost=%v %v\n",
+				groupDefinitionLabels[1].label,
+				s.SecondGroupKey,
+				groupDefinitionLabels[0].label,
+				s.FirstGroupKey,
+				s.ServiceCost,
+				s.Timestamp)
 		}
 	} else {
 		for _, s := range servicesFromAWS {
 			if exact {
-				if ok, accountName, accountTags := checkElementInArray(c, s.AccountID); ok {
-					fmt.Fprintf(resultFile, "aws-cost,account_id=%v,account_name=%v,service_name=%v%v cost=%v %v\n", s.AccountID, accountName, s.ServiceName, accountTags, s.ServiceCost, s.Timestamp)
+				if ok, accountName, accountTags := checkElementInArray(c, s.SecondGroupKey); ok {
+					fmt.Fprintf(resultFile,
+						"aws-cost,%v=%v,account_name=%v,%v=%v%v cost=%v %v\n",
+						groupDefinitionLabels[1].label,
+						s.SecondGroupKey,
+						accountName,
+						groupDefinitionLabels[0].label,
+						s.FirstGroupKey,
+						accountTags,
+						s.ServiceCost,
+						s.Timestamp)
 				}
 			} else {
-				if ok, accountName, accountTags := checkElementInArray(c, s.AccountID); ok {
-					fmt.Fprintf(resultFile, "aws-cost,account_id=%v,account_name=%v,service_name=%v%v cost=%v %v\n", s.AccountID, accountName, s.ServiceName, accountTags, s.ServiceCost, s.Timestamp)
+				if ok, accountName, accountTags := checkElementInArray(c, s.SecondGroupKey); ok {
+					fmt.Fprintf(resultFile,
+						"aws-cost,%v=%v,account_name=%v,%v=%v%v cost=%v %v\n",
+						groupDefinitionLabels[1].label,
+						s.SecondGroupKey,
+						accountName,
+						groupDefinitionLabels[0].label,
+						s.FirstGroupKey,
+						accountTags,
+						s.ServiceCost,
+						s.Timestamp)
 				} else {
-					fmt.Fprintf(resultFile, "aws-cost,account_id=%v,account_name=%v,service_name=%v cost=%v %v\n", s.AccountID, accountName, s.ServiceName, s.ServiceCost, s.Timestamp)
+					fmt.Fprintf(resultFile,
+						"aws-cost,%v=%v,account_name=%v,%v=%v cost=%v %v\n",
+						groupDefinitionLabels[1].label,
+						s.SecondGroupKey,
+						accountName,
+						s.FirstGroupKey,
+						s.ServiceCost,
+						s.Timestamp)
 				}
 			}
 		}
