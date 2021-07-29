@@ -7,36 +7,36 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"context"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/aws/external"
+	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/costexplorer"
+	"github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
 )
 
 var (
-	date       string
-	keyID      string
-	secretKey  string
-	configFile string
-	resultPath string
-	exact      bool
-	logLevel   string
+	date       			string
+	keyID      			string
+	secretKey  			string
+	configFile 			string
+	resultPath 			string
+	exact      			bool
+	logLevel   			string
+	region				string
+	tagsList   			[]string
+	defaultTag = 		"Unknown"
 
-	tagsList   []string
-	defaultTag = "Unknown"
-
-	resultFile  *os.File
-	debugLogger *log.Logger
-	traceLogger *log.Logger
+	resultFile  		*os.File
+	debugLogger 		*log.Logger
+	traceLogger 		*log.Logger
 )
 
 type settings struct {
-	AWSKeyID     string `json:"aws_key_id"`
-	AWSSecretKey string `json:"aws_secret_key"`
-	Date         string `json:"date"`
+	AWSKeyID     			string `json:"aws_key_id,omitempty"`
+	AWSSecretKey 			string `json:"aws_secret_key,omitempty"`
+	Date         			string `json:"date"`
 }
 
 type Config struct {
@@ -60,6 +60,7 @@ func init() {
 	flag.StringVar(&date, "date", "", "date in format yyyy-MM-dd, (by default will be set as yesterday)")
 	flag.StringVar(&keyID, "key-id", "", "AWS key ID(by default will be taken from env AWS_ACCESS_KEY_ID)")
 	flag.StringVar(&secretKey, "secret", "", "AWS secret key(by default will be taken from env AWS_SECRET_KEY)")
+	flag.StringVar(&region, "region", "eu-west-1", "region")
 	flag.StringVar(&configFile, "config", "", "config file")
 	flag.StringVar(&resultPath, "result", "", "result file")
 	flag.StringVar(&logLevel, "log", "", "log level(only 'debug' is supported right now)")
@@ -72,17 +73,16 @@ func init() {
 		os.Exit(1)
 	}
 
-	if keyID == "" {
-		keyID = os.Getenv("AWS_ACCESS_KEY_ID")
+	if keyID != "" {
+		os.Setenv("AWS_ACCESS_KEY_ID",keyID)
 	}
 
-	if secretKey == "" {
-		secretKey = os.Getenv("AWS_SECRET_KEY")
+	if secretKey != "" {
+		os.Setenv("AWS_SECRET_ACCESS_KEY",secretKey)
 	}
 
-	if keyID == "" || secretKey == "" {
-		flag.PrintDefaults()
-		os.Exit(1)
+	if region != "" {
+		os.Setenv("AWS_REGION",region)
 	}
 
 	if date == "" {
@@ -148,8 +148,10 @@ func addTags(tag string) bool {
 	return true
 }
 
-func getDataFromAWS(a *settings) (*[]costexplorer.ResultByTime, error) {
+
+func getDataFromAWS(a *settings) (*[]types.ResultByTime, error) {
 	var err error
+	var ctx = context.TODO()
 	groupDefinitions := []string{"SERVICE", "LINKED_ACCOUNT"}
 
 	debugLogger.Printf("collecting data from AWS\n")
@@ -157,35 +159,26 @@ func getDataFromAWS(a *settings) (*[]costexplorer.ResultByTime, error) {
 	t, _ := time.Parse("2006-01-02", date)
 	end := t.AddDate(0, 0, 1).Format("2006-01-02")
 
-	cfg, err := external.LoadDefaultAWSConfig(
-		external.WithCredentialsValue(aws.Credentials{
-			AccessKeyID:     a.AWSKeyID,
-			SecretAccessKey: a.AWSSecretKey,
-		}),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load config, %v", err)
-	}
+	cfg, err := config.LoadDefaultConfig(ctx)
 
-	ce := costexplorer.New(cfg)
+	ce := costexplorer.NewFromConfig(cfg)
 
-	request := ce.GetCostAndUsageRequest(&costexplorer.GetCostAndUsageInput{
+	data, err := ce.GetCostAndUsage(ctx, &costexplorer.GetCostAndUsageInput{
 		Granularity: "DAILY",
 		Metrics:     []string{"UnblendedCost"},
-		GroupBy: []costexplorer.GroupDefinition{{
+		GroupBy: []types.GroupDefinition{{
 			Type: "DIMENSION",
 			Key:  &groupDefinitions[0],
 		}, {
 			Type: "DIMENSION",
 			Key:  &groupDefinitions[1],
 		}},
-		TimePeriod: &costexplorer.DateInterval{
+		TimePeriod: &types.DateInterval{
 			Start: &date,
 			End:   &end,
 		},
 	})
 
-	data, err := request.Send()
 	if err != nil {
 		return nil, fmt.Errorf("failed to do request, %v", err)
 	}
@@ -194,7 +187,7 @@ func getDataFromAWS(a *settings) (*[]costexplorer.ResultByTime, error) {
 	return &data.ResultsByTime, err
 }
 
-func getServiceCost(results *[]costexplorer.ResultByTime) []serviceCost {
+func getServiceCost(results *[]types.ResultByTime) []serviceCost {
 	sc := []serviceCost{}
 	t, _ := time.Parse("2006-01-02", date)
 	timestamp := strconv.FormatInt(t.UnixNano(), 10)
@@ -277,7 +270,6 @@ func main() {
 	var c Config
 	var err error
 	defer resultFile.Close()
-
 	if configFile != "" {
 		c, err = loadConfig(configFile)
 		if err != nil {
@@ -289,6 +281,7 @@ func main() {
 		AWSKeyID:     keyID,
 		AWSSecretKey: secretKey,
 		Date:         date,
+
 	})
 	if err != nil {
 		log.Fatal(err)
