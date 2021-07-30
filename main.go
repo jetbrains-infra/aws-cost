@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"reflect"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/costexplorer"
 	"github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
@@ -32,6 +33,7 @@ var (
 	resultFile  			*os.File
 	debugLogger 			*log.Logger
 	traceLogger 			*log.Logger
+	filters					types.Expression
 )
 
 type settings struct {
@@ -46,6 +48,7 @@ type Config struct {
 		ID   string            `json:"id"`
 		Tags map[string]string `json:"tags,omitempty"`
 	} `json:"accounts"`
+	Filters types.Expression `json:"filters,omitempty"`
 }
 
 type serviceCost struct {
@@ -112,8 +115,10 @@ func init() {
 	}
 	groupDefinitionLabels[1] = groupDefinitionLabel{
 		groupId: "LINKED_ACCOUNT",
-		label: "account_name",
+		label: "account_id",
 	}
+
+	filters = types.Expression{}
 
 	debugLogger = log.New(ioutil.Discard, "", -1)
 	traceLogger = log.New(ioutil.Discard, "", -1)
@@ -148,6 +153,9 @@ func loadConfig(path string) (Config, error) {
 			}
 		}
 	}
+	if ! reflect.DeepEqual(types.Expression{}, c.Filters) {
+		filters = c.Filters
+	}
 
 	debugLogger.Printf("config loaded\n")
 	return c, err
@@ -178,7 +186,7 @@ func getDataFromAWS(a *settings) (*[]types.ResultByTime, error) {
 
 	ce := costexplorer.NewFromConfig(cfg)
 
-	data, err := ce.GetCostAndUsage(ctx, &costexplorer.GetCostAndUsageInput{
+	caui := costexplorer.GetCostAndUsageInput{
 		Granularity: "DAILY",
 		Metrics:     []string{"UnblendedCost"},
 		GroupBy: []types.GroupDefinition{{
@@ -192,7 +200,12 @@ func getDataFromAWS(a *settings) (*[]types.ResultByTime, error) {
 			Start: &date,
 			End:   &end,
 		},
-	})
+	}
+	if ! reflect.DeepEqual(types.Expression{}, filters) {
+		caui.Filter = &filters
+	}
+
+	data, err := ce.GetCostAndUsage(ctx, &caui)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to do request, %v", err)

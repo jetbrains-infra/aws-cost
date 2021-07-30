@@ -5,3 +5,4 @@ bin/
 cost
 aws-cost
 result.txt
+config.json
