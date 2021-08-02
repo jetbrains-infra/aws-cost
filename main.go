@@ -33,7 +33,7 @@ var (
 	resultFile  			*os.File
 	debugLogger 			*log.Logger
 	traceLogger 			*log.Logger
-	filters					types.Expression
+	filter					types.Expression
 )
 
 type settings struct {
@@ -48,7 +48,8 @@ type Config struct {
 		ID   string            `json:"id"`
 		Tags map[string]string `json:"tags,omitempty"`
 	} `json:"accounts"`
-	Filters types.Expression `json:"filters,omitempty"`
+	Filter types.Expression `json:"filter,omitempty"`
+	Group []groupDefinitionLabel `json:"group,omitempty"`
 }
 
 type serviceCost struct {
@@ -59,8 +60,8 @@ type serviceCost struct {
 }
 
 type groupDefinitionLabel struct {
-	groupId   	string
-	label		string
+	GroupId   	string `json:"group_id"`
+	Label		string `json:"label"`
 }
 
 func init() {
@@ -110,15 +111,15 @@ func init() {
 
 	groupDefinitionLabels = make([]groupDefinitionLabel,2)
 	groupDefinitionLabels[0] = groupDefinitionLabel{
-		groupId: "SERVICE",
-		label: "service_name",
+		GroupId: "SERVICE",
+		Label: "service_name",
 	}
 	groupDefinitionLabels[1] = groupDefinitionLabel{
-		groupId: "LINKED_ACCOUNT",
-		label: "account_id",
+		GroupId: "LINKED_ACCOUNT",
+		Label: "account_id",
 	}
 
-	filters = types.Expression{}
+	filter = types.Expression{}
 
 	debugLogger = log.New(ioutil.Discard, "", -1)
 	traceLogger = log.New(ioutil.Discard, "", -1)
@@ -138,7 +139,7 @@ func loadConfig(path string) (Config, error) {
 
 	file, err := ioutil.ReadFile(path)
 	if err != nil {
-		return c, fmt.Errorf("can't load config: %v", err)
+		return c, fmt.Errorf("can't logroupDefinitionLabelsad config: %v", err)
 	}
 
 	err = json.Unmarshal(file, &c)
@@ -153,10 +154,18 @@ func loadConfig(path string) (Config, error) {
 			}
 		}
 	}
-	if ! reflect.DeepEqual(types.Expression{}, c.Filters) {
-		filters = c.Filters
+	if ! reflect.DeepEqual(types.Expression{}, c.Filter) {
+		filter = c.Filter
 	}
 
+	if len(c.Group) == 1 {
+		groupDefinitionLabels[1] = c.Group[0]
+	}
+
+	if len(c.Group) >= 2 {
+		groupDefinitionLabels[0] = c.Group[0]
+		groupDefinitionLabels[1] = c.Group[1]
+	}
 	debugLogger.Printf("config loaded\n")
 	return c, err
 }
@@ -191,18 +200,18 @@ func getDataFromAWS(a *settings) (*[]types.ResultByTime, error) {
 		Metrics:     []string{"UnblendedCost"},
 		GroupBy: []types.GroupDefinition{{
 			Type: "DIMENSION",
-			Key:  &groupDefinitionLabels[0].groupId,
+			Key:  &groupDefinitionLabels[0].GroupId,
 		}, {
 			Type: "DIMENSION",
-			Key:  &groupDefinitionLabels[1].groupId,
+			Key:  &groupDefinitionLabels[1].GroupId,
 		}},
 		TimePeriod: &types.DateInterval{
 			Start: &date,
 			End:   &end,
 		},
 	}
-	if ! reflect.DeepEqual(types.Expression{}, filters) {
-		caui.Filter = &filters
+	if ! reflect.DeepEqual(types.Expression{}, filter) {
+		caui.Filter = &filter
 	}
 
 	data, err := ce.GetCostAndUsage(ctx, &caui)
@@ -215,6 +224,10 @@ func getDataFromAWS(a *settings) (*[]types.ResultByTime, error) {
 	return &data.ResultsByTime, err
 }
 
+func cleanString(s string) string{
+	return strings.Replace(strings.Replace(s," ","_",-1),"_-_","_",-1)
+}
+
 func getServiceCost(results *[]types.ResultByTime) []serviceCost {
 	sc := []serviceCost{}
 	t, _ := time.Parse("2006-01-02", date)
@@ -223,8 +236,8 @@ func getServiceCost(results *[]types.ResultByTime) []serviceCost {
 	for _, timePeriod := range *results {
 		for _, group := range timePeriod.Groups {
 			sc = append(sc, serviceCost{
-				SecondGroupKey:   group.Keys[1],
-				FirstGroupKey: strings.Replace(group.Keys[0], " ", "_", -1),
+				SecondGroupKey:   cleanString(group.Keys[1]),
+				FirstGroupKey: cleanString(group.Keys[0]),
 				ServiceCost: *group.Metrics["UnblendedCost"].Amount,
 				Timestamp:   timestamp,
 			})
@@ -235,13 +248,13 @@ func getServiceCost(results *[]types.ResultByTime) []serviceCost {
 
 func printInfluxLineProtocol(servicesFromAWS []serviceCost, c Config) {
 	debugLogger.Printf("printing result in Influx Line Protocol to %s\n", resultFile.Name())
-	if len(c.Accounts) == 0 {
+	if len(c.Accounts) == 0 || groupDefinitionLabels[1].GroupId != "LINKED_ACCOUNT" {
 		for _, s := range servicesFromAWS {
 			fmt.Fprintf(resultFile,
 				"aws-cost,%v=%v,%v=%v cost=%v %v\n",
-				groupDefinitionLabels[1].label,
+				groupDefinitionLabels[1].Label,
 				s.SecondGroupKey,
-				groupDefinitionLabels[0].label,
+				groupDefinitionLabels[0].Label,
 				s.FirstGroupKey,
 				s.ServiceCost,
 				s.Timestamp)
@@ -252,10 +265,10 @@ func printInfluxLineProtocol(servicesFromAWS []serviceCost, c Config) {
 				if ok, accountName, accountTags := checkElementInArray(c, s.SecondGroupKey); ok {
 					fmt.Fprintf(resultFile,
 						"aws-cost,%v=%v,account_name=%v,%v=%v%v cost=%v %v\n",
-						groupDefinitionLabels[1].label,
+						groupDefinitionLabels[1].Label,
 						s.SecondGroupKey,
 						accountName,
-						groupDefinitionLabels[0].label,
+						groupDefinitionLabels[0].Label,
 						s.FirstGroupKey,
 						accountTags,
 						s.ServiceCost,
@@ -265,10 +278,10 @@ func printInfluxLineProtocol(servicesFromAWS []serviceCost, c Config) {
 				if ok, accountName, accountTags := checkElementInArray(c, s.SecondGroupKey); ok {
 					fmt.Fprintf(resultFile,
 						"aws-cost,%v=%v,account_name=%v,%v=%v%v cost=%v %v\n",
-						groupDefinitionLabels[1].label,
+						groupDefinitionLabels[1].Label,
 						s.SecondGroupKey,
 						accountName,
-						groupDefinitionLabels[0].label,
+						groupDefinitionLabels[0].Label,
 						s.FirstGroupKey,
 						accountTags,
 						s.ServiceCost,
@@ -276,9 +289,10 @@ func printInfluxLineProtocol(servicesFromAWS []serviceCost, c Config) {
 				} else {
 					fmt.Fprintf(resultFile,
 						"aws-cost,%v=%v,account_name=%v,%v=%v cost=%v %v\n",
-						groupDefinitionLabels[1].label,
+						groupDefinitionLabels[1].Label,
 						s.SecondGroupKey,
 						accountName,
+						groupDefinitionLabels[0].Label,
 						s.FirstGroupKey,
 						s.ServiceCost,
 						s.Timestamp)

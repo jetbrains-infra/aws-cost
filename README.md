@@ -47,7 +47,7 @@ $ ./aws-cost
 ```
 or:
 ```bash
-$ ./aws-cost -key-id AKI... -secret 9eg... 
+$ ./aws-cost -key-id AKI... -secret 9eg...
 ```
 
 By default will be used *yesterday* as date, but you can specify date with `-date` parameter(`YYYY-MM-DD` format):
@@ -73,7 +73,8 @@ And run:
 
 ### Tags
 
-You can use additional tags for your account. The idea of this feature is using different accounts in same project. Here is the config for example:
+You can use additional tags for your account, filter using Expressionand and also change grouping.
+The idea of this feature is using different accounts in same project. Warning, additional tags require second grouping to be LINKED_ACCOUNT. See [here](https://github.com/aws/aws-sdk-go-v2/blob/c698c9b1ca4c7195a49b1c19840f8528898e22e3/service/costexplorer/types/types.go) for possible values. Here is the config for example:
 ```json
 {
   "accounts": [
@@ -85,7 +86,33 @@ You can use additional tags for your account. The idea of this feature is using 
           "project": "website"
       }
     }
-  ]
+  ],
+  "filter": {
+      "And": [
+          {
+              "Tags": {
+                  "Key": "ENV",
+                  "Values": ["PROD"]
+              }
+          },
+          {
+              "Tags": {
+                  "Key": "Name",
+                  "Values": ["APP1","APP2"]
+              }
+          }
+      ]
+  },
+  "group": [
+        {
+            "group_id":"REGION",
+            "label":"region"
+        },
+        {
+            "group_id":"LINKED_ACCOUNT",
+            "label":"account_id"
+        }
+    ]
 }
 ```
 And run:
