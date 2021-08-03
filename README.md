@@ -112,7 +112,11 @@ Warning, additional tags require second grouping to be LINKED_ACCOUNT. See [here
             "group_id":"LINKED_ACCOUNT",
             "label":"account_id"
         }
-    ]
+    ],
+   "tags":{
+       "env":"prod",
+       "apps":"app1_app2"
+   }
 }
 ```
 And run:
