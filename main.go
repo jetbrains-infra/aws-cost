@@ -15,6 +15,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/costexplorer"
 	"github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
+	"github.com/influxdata/influxdb-client-go/v2"
+	"github.com/influxdata/influxdb-client-go/v2/api"
 )
 
 var (
@@ -27,8 +29,12 @@ var (
 	logLevel   				string
 	region					string
 	tagsList   				[]string
+	globalTags				map[string]string
 	groupDefinitionLabels	[]groupDefinitionLabel
 	defaultTag = 			"Unknown"
+	client 				    influxdb2.Client
+	writeAPI				api.WriteAPIBlocking
+	influxUrl				string
 
 	resultFile  			*os.File
 	debugLogger 			*log.Logger
@@ -50,6 +56,7 @@ type Config struct {
 	} `json:"accounts"`
 	Filter types.Expression `json:"filter,omitempty"`
 	Group []groupDefinitionLabel `json:"group,omitempty"`
+	GlobalTags map[string]string `json:"tags,omitempty"`
 }
 
 type serviceCost struct {
@@ -66,6 +73,7 @@ type groupDefinitionLabel struct {
 
 func init() {
 	var err error
+	var influxToken string
 
 	flag.StringVar(&date, "date", "", "date in format yyyy-MM-dd, (by default will be set as yesterday)")
 	flag.StringVar(&keyID, "key-id", "", "AWS key ID(by default will be taken from env AWS_ACCESS_KEY_ID)")
@@ -73,6 +81,8 @@ func init() {
 	flag.StringVar(&region, "region", "eu-west-1", "region")
 	flag.StringVar(&configFile, "config", "", "config file")
 	flag.StringVar(&resultPath, "result", "", "result file")
+	flag.StringVar(&influxUrl, "influx-url", "", "InfluxDB url")
+	flag.StringVar(&influxToken, "influx-token", "", "InFluxDB Token")
 	flag.StringVar(&logLevel, "log", "", "log level(only 'debug' is supported right now)")
 	flag.BoolVar(&exact, "exact", false, "show only accounts from config file")
 
@@ -98,6 +108,12 @@ func init() {
 	if date == "" {
 		yesterday := time.Now().AddDate(0, 0, -1)
 		date = yesterday.Format("2006-01-02")
+	}
+
+	if influxUrl != "" {
+		fmt.Println("Output influx selected")
+		client = influxdb2.NewClient(influxUrl, influxToken)
+		writeAPI = client.WriteAPIBlocking("adot", "metrics")
 	}
 
 	resultFile = os.Stdout
@@ -156,6 +172,9 @@ func loadConfig(path string) (Config, error) {
 	}
 	if ! reflect.DeepEqual(types.Expression{}, c.Filter) {
 		filter = c.Filter
+	}
+	if len(c.GlobalTags) != 0 {
+		globalTags = c.GlobalTags
 	}
 
 	if len(c.Group) == 1 {
@@ -246,16 +265,34 @@ func getServiceCost(results *[]types.ResultByTime) []serviceCost {
 	return sc
 }
 
+func printToOutput(tpl string, params ...string) {
+	tmp := make([]interface{}, len(params))
+	for i, val := range params {
+        tmp[i] = val
+    }
+	if influxUrl != "" {
+		line := fmt.Sprintf(tpl, tmp...)
+		err := writeAPI.WriteRecord(context.Background(), line)
+		if err != nil {
+            panic(err)
+        }
+	} else {
+		fmt.Fprintf(resultFile, tpl+"\n", tmp...)
+	}
+}
+
 func printInfluxLineProtocol(servicesFromAWS []serviceCost, c Config) {
 	debugLogger.Printf("printing result in Influx Line Protocol to %s\n", resultFile.Name())
+	globalTagsString := getStringWithTags(globalTags)
 	if len(c.Accounts) == 0 || groupDefinitionLabels[1].GroupId != "LINKED_ACCOUNT" {
 		for _, s := range servicesFromAWS {
-			fmt.Fprintf(resultFile,
-				"aws-cost,%v=%v,%v=%v cost=%v %v\n",
+			printToOutput(
+				"aws_cost,%v=%v,%v=%v%v cost=%v %v",
 				groupDefinitionLabels[1].Label,
 				s.SecondGroupKey,
 				groupDefinitionLabels[0].Label,
 				s.FirstGroupKey,
+				globalTagsString,
 				s.ServiceCost,
 				s.Timestamp)
 		}
@@ -263,37 +300,38 @@ func printInfluxLineProtocol(servicesFromAWS []serviceCost, c Config) {
 		for _, s := range servicesFromAWS {
 			if exact {
 				if ok, accountName, accountTags := checkElementInArray(c, s.SecondGroupKey); ok {
-					fmt.Fprintf(resultFile,
-						"aws-cost,%v=%v,account_name=%v,%v=%v%v cost=%v %v\n",
+					printToOutput(
+						"aws_cost,%v=%v,account_name=%v,%v=%v%v cost=%v %v",
 						groupDefinitionLabels[1].Label,
 						s.SecondGroupKey,
 						accountName,
 						groupDefinitionLabels[0].Label,
 						s.FirstGroupKey,
-						accountTags,
+						globalTagsString+accountTags,
 						s.ServiceCost,
 						s.Timestamp)
 				}
 			} else {
 				if ok, accountName, accountTags := checkElementInArray(c, s.SecondGroupKey); ok {
-					fmt.Fprintf(resultFile,
-						"aws-cost,%v=%v,account_name=%v,%v=%v%v cost=%v %v\n",
+					printToOutput(
+						"aws_cost,%v=%v,account_name=%v,%v=%v%v cost=%v %v",
 						groupDefinitionLabels[1].Label,
 						s.SecondGroupKey,
 						accountName,
 						groupDefinitionLabels[0].Label,
 						s.FirstGroupKey,
-						accountTags,
+						globalTagsString+accountTags,
 						s.ServiceCost,
 						s.Timestamp)
 				} else {
-					fmt.Fprintf(resultFile,
-						"aws-cost,%v=%v,account_name=%v,%v=%v cost=%v %v\n",
+					printToOutput(
+						"aws_cost,%v=%v,account_name=%v,%v=%v%v cost=%v %v",
 						groupDefinitionLabels[1].Label,
 						s.SecondGroupKey,
 						accountName,
 						groupDefinitionLabels[0].Label,
 						s.FirstGroupKey,
+						globalTagsString,
 						s.ServiceCost,
 						s.Timestamp)
 				}
@@ -329,10 +367,10 @@ func checkElementInArray(config Config, element string) (bool, string, string) {
 	return false, "", ""
 }
 
-func getStringWithTags(accountTags map[string]string) string {
+func getStringWithTags(inputTags map[string]string) string {
 	tags := ""
-	for tag := range accountTags {
-		tags += fmt.Sprintf(",%s=%s", tag, accountTags[tag])
+	for tag := range inputTags {
+		tags += fmt.Sprintf(",%s=%s", tag, inputTags[tag])
 	}
 
 	ret := strings.Replace(tags, " ", "_", -1)
@@ -349,6 +387,10 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
+	}
+
+	if influxUrl != "" {
+		defer client.Close()
 	}
 
 	data, err := getDataFromAWS(&settings{
