@@ -111,7 +111,7 @@ func init() {
 	}
 
 	if influxUrl != "" {
-		fmt.Println("Output influx selected")
+		log.Println("Output influx selected")
 		client = influxdb2.NewClient(influxUrl, influxToken)
 		writeAPI = client.WriteAPIBlocking("adot", "metrics")
 	}
