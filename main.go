@@ -1,41 +1,50 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/costexplorer"
+	"github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
+	"github.com/influxdata/influxdb-client-go/v2"
+	"github.com/influxdata/influxdb-client-go/v2/api"
 	"io/ioutil"
 	"log"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/aws/external"
-	"github.com/aws/aws-sdk-go-v2/service/costexplorer"
 )
 
 var (
-	date       string
-	keyID      string
-	secretKey  string
-	configFile string
-	resultPath string
-	exact      bool
-	logLevel   string
-
-	tagsList   []string
-	defaultTag = "Unknown"
+	date                  string
+	keyID                 string
+	secretKey             string
+	configFile            string
+	resultPath            string
+	exact                 bool
+	logLevel              string
+	region                string
+	tagsList              []string
+	globalTags            map[string]string
+	groupDefinitionLabels []groupDefinitionLabel
+	defaultTag            = "Unknown"
+	client                influxdb2.Client
+	writeAPI              api.WriteAPIBlocking
+	influxUrl             string
 
 	resultFile  *os.File
 	debugLogger *log.Logger
 	traceLogger *log.Logger
+	filter      types.Expression
 )
 
 type settings struct {
-	AWSKeyID     string `json:"aws_key_id"`
-	AWSSecretKey string `json:"aws_secret_key"`
+	AWSKeyID     string `json:"aws_key_id,omitempty"`
+	AWSSecretKey string `json:"aws_secret_key,omitempty"`
 	Date         string `json:"date"`
 }
 
@@ -45,23 +54,35 @@ type Config struct {
 		ID   string            `json:"id"`
 		Tags map[string]string `json:"tags,omitempty"`
 	} `json:"accounts"`
+	Filter     types.Expression       `json:"filter,omitempty"`
+	Group      []groupDefinitionLabel `json:"group,omitempty"`
+	GlobalTags map[string]string      `json:"tags,omitempty"`
 }
 
 type serviceCost struct {
-	AccountID   string `json:"account_id"`
-	ServiceName string `json:"service_name"`
-	ServiceCost string `json:"service_cost"`
-	Timestamp   string `json:"timestamp"`
+	SecondGroupKey string `json:"second_group_key"`
+	FirstGroupKey  string `json:"first_group_key"`
+	ServiceCost    string `json:"service_cost"`
+	Timestamp      string `json:"timestamp"`
+}
+
+type groupDefinitionLabel struct {
+	GroupId string `json:"group_id"`
+	Label   string `json:"label"`
 }
 
 func init() {
 	var err error
+	var influxToken string
 
 	flag.StringVar(&date, "date", "", "date in format yyyy-MM-dd, (by default will be set as yesterday)")
 	flag.StringVar(&keyID, "key-id", "", "AWS key ID(by default will be taken from env AWS_ACCESS_KEY_ID)")
 	flag.StringVar(&secretKey, "secret", "", "AWS secret key(by default will be taken from env AWS_SECRET_KEY)")
+	flag.StringVar(&region, "region", "eu-west-1", "region")
 	flag.StringVar(&configFile, "config", "", "config file")
 	flag.StringVar(&resultPath, "result", "", "result file")
+	flag.StringVar(&influxUrl, "influx-url", "", "InfluxDB url")
+	flag.StringVar(&influxToken, "influx-token", "", "InFluxDB Token")
 	flag.StringVar(&logLevel, "log", "", "log level(only 'debug' is supported right now)")
 	flag.BoolVar(&exact, "exact", false, "show only accounts from config file")
 
@@ -72,22 +93,27 @@ func init() {
 		os.Exit(1)
 	}
 
-	if keyID == "" {
-		keyID = os.Getenv("AWS_ACCESS_KEY_ID")
+	if keyID != "" {
+		os.Setenv("AWS_ACCESS_KEY_ID", keyID)
 	}
 
-	if secretKey == "" {
-		secretKey = os.Getenv("AWS_SECRET_KEY")
+	if secretKey != "" {
+		os.Setenv("AWS_SECRET_ACCESS_KEY", secretKey)
 	}
 
-	if keyID == "" || secretKey == "" {
-		flag.PrintDefaults()
-		os.Exit(1)
+	if region != "" {
+		os.Setenv("AWS_REGION", region)
 	}
 
 	if date == "" {
 		yesterday := time.Now().AddDate(0, 0, -1)
 		date = yesterday.Format("2006-01-02")
+	}
+
+	if influxUrl != "" {
+		log.Println("Output influx selected")
+		client = influxdb2.NewClient(influxUrl, influxToken)
+		writeAPI = client.WriteAPIBlocking("adot", "metrics")
 	}
 
 	resultFile = os.Stdout
@@ -98,6 +124,18 @@ func init() {
 			log.Fatalf("failed opening file: %s", err)
 		}
 	}
+
+	groupDefinitionLabels = make([]groupDefinitionLabel, 2)
+	groupDefinitionLabels[0] = groupDefinitionLabel{
+		GroupId: "SERVICE",
+		Label:   "service_name",
+	}
+	groupDefinitionLabels[1] = groupDefinitionLabel{
+		GroupId: "LINKED_ACCOUNT",
+		Label:   "account_id",
+	}
+
+	filter = types.Expression{}
 
 	debugLogger = log.New(ioutil.Discard, "", -1)
 	traceLogger = log.New(ioutil.Discard, "", -1)
@@ -117,7 +155,7 @@ func loadConfig(path string) (Config, error) {
 
 	file, err := ioutil.ReadFile(path)
 	if err != nil {
-		return c, fmt.Errorf("can't load config: %v", err)
+		return c, fmt.Errorf("can't logroupDefinitionLabelsad config: %v", err)
 	}
 
 	err = json.Unmarshal(file, &c)
@@ -132,7 +170,21 @@ func loadConfig(path string) (Config, error) {
 			}
 		}
 	}
+	if !reflect.DeepEqual(types.Expression{}, c.Filter) {
+		filter = c.Filter
+	}
+	if len(c.GlobalTags) != 0 {
+		globalTags = c.GlobalTags
+	}
 
+	if len(c.Group) == 1 {
+		groupDefinitionLabels[1] = c.Group[0]
+	}
+
+	if len(c.Group) >= 2 {
+		groupDefinitionLabels[0] = c.Group[0]
+		groupDefinitionLabels[1] = c.Group[1]
+	}
 	debugLogger.Printf("config loaded\n")
 	return c, err
 }
@@ -148,44 +200,40 @@ func addTags(tag string) bool {
 	return true
 }
 
-func getDataFromAWS(a *settings) (*[]costexplorer.ResultByTime, error) {
+func getDataFromAWS(a *settings) (*[]types.ResultByTime, error) {
 	var err error
-	groupDefinitions := []string{"SERVICE", "LINKED_ACCOUNT"}
+	var ctx = context.TODO()
 
 	debugLogger.Printf("collecting data from AWS\n")
 
 	t, _ := time.Parse("2006-01-02", date)
 	end := t.AddDate(0, 0, 1).Format("2006-01-02")
 
-	cfg, err := external.LoadDefaultAWSConfig(
-		external.WithCredentialsValue(aws.Credentials{
-			AccessKeyID:     a.AWSKeyID,
-			SecretAccessKey: a.AWSSecretKey,
-		}),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load config, %v", err)
-	}
+	cfg, err := config.LoadDefaultConfig(ctx)
 
-	ce := costexplorer.New(cfg)
+	ce := costexplorer.NewFromConfig(cfg)
 
-	request := ce.GetCostAndUsageRequest(&costexplorer.GetCostAndUsageInput{
+	caui := costexplorer.GetCostAndUsageInput{
 		Granularity: "DAILY",
 		Metrics:     []string{"UnblendedCost"},
-		GroupBy: []costexplorer.GroupDefinition{{
+		GroupBy: []types.GroupDefinition{{
 			Type: "DIMENSION",
-			Key:  &groupDefinitions[0],
+			Key:  &groupDefinitionLabels[0].GroupId,
 		}, {
 			Type: "DIMENSION",
-			Key:  &groupDefinitions[1],
+			Key:  &groupDefinitionLabels[1].GroupId,
 		}},
-		TimePeriod: &costexplorer.DateInterval{
+		TimePeriod: &types.DateInterval{
 			Start: &date,
 			End:   &end,
 		},
-	})
+	}
+	if !reflect.DeepEqual(types.Expression{}, filter) {
+		caui.Filter = &filter
+	}
 
-	data, err := request.Send()
+	data, err := ce.GetCostAndUsage(ctx, &caui)
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to do request, %v", err)
 	}
@@ -194,7 +242,11 @@ func getDataFromAWS(a *settings) (*[]costexplorer.ResultByTime, error) {
 	return &data.ResultsByTime, err
 }
 
-func getServiceCost(results *[]costexplorer.ResultByTime) []serviceCost {
+func cleanString(s string) string {
+	return strings.Replace(strings.Replace(s, " ", "_", -1), "_-_", "_", -1)
+}
+
+func getServiceCost(results *[]types.ResultByTime) []serviceCost {
 	sc := []serviceCost{}
 	t, _ := time.Parse("2006-01-02", date)
 	timestamp := strconv.FormatInt(t.UnixNano(), 10)
@@ -202,33 +254,85 @@ func getServiceCost(results *[]costexplorer.ResultByTime) []serviceCost {
 	for _, timePeriod := range *results {
 		for _, group := range timePeriod.Groups {
 			sc = append(sc, serviceCost{
-				AccountID:   group.Keys[1],
-				ServiceName: strings.Replace(group.Keys[0], " ", "_", -1),
-				ServiceCost: *group.Metrics["UnblendedCost"].Amount,
-				Timestamp:   timestamp,
+				SecondGroupKey: cleanString(group.Keys[1]),
+				FirstGroupKey:  cleanString(group.Keys[0]),
+				ServiceCost:    *group.Metrics["UnblendedCost"].Amount,
+				Timestamp:      timestamp,
 			})
 		}
 	}
 	return sc
 }
 
+func printToOutput(tpl string, params ...string) {
+	tmp := make([]interface{}, len(params))
+	for i, val := range params {
+		tmp[i] = val
+	}
+	if influxUrl != "" {
+		line := fmt.Sprintf(tpl, tmp...)
+		err := writeAPI.WriteRecord(context.Background(), line)
+		if err != nil {
+			panic(err)
+		}
+	} else {
+		fmt.Fprintf(resultFile, tpl+"\n", tmp...)
+	}
+}
+
 func printInfluxLineProtocol(servicesFromAWS []serviceCost, c Config) {
 	debugLogger.Printf("printing result in Influx Line Protocol to %s\n", resultFile.Name())
-	if len(c.Accounts) == 0 {
+	globalTagsString := getStringWithTags(globalTags)
+	if len(c.Accounts) == 0 || groupDefinitionLabels[1].GroupId != "LINKED_ACCOUNT" {
 		for _, s := range servicesFromAWS {
-			fmt.Fprintf(resultFile, "aws-cost,account_id=%v,service_name=%v cost=%v %v\n", s.AccountID, s.ServiceName, s.ServiceCost, s.Timestamp)
+			printToOutput(
+				"aws_cost,%v=%v,%v=%v%v cost=%v %v",
+				groupDefinitionLabels[1].Label,
+				s.SecondGroupKey,
+				groupDefinitionLabels[0].Label,
+				s.FirstGroupKey,
+				globalTagsString,
+				s.ServiceCost,
+				s.Timestamp)
 		}
 	} else {
 		for _, s := range servicesFromAWS {
 			if exact {
-				if ok, accountName, accountTags := checkElementInArray(c, s.AccountID); ok {
-					fmt.Fprintf(resultFile, "aws-cost,account_id=%v,account_name=%v,service_name=%v%v cost=%v %v\n", s.AccountID, accountName, s.ServiceName, accountTags, s.ServiceCost, s.Timestamp)
+				if ok, accountName, accountTags := checkElementInArray(c, s.SecondGroupKey); ok {
+					printToOutput(
+						"aws_cost,%v=%v,account_name=%v,%v=%v%v cost=%v %v",
+						groupDefinitionLabels[1].Label,
+						s.SecondGroupKey,
+						accountName,
+						groupDefinitionLabels[0].Label,
+						s.FirstGroupKey,
+						globalTagsString+accountTags,
+						s.ServiceCost,
+						s.Timestamp)
 				}
 			} else {
-				if ok, accountName, accountTags := checkElementInArray(c, s.AccountID); ok {
-					fmt.Fprintf(resultFile, "aws-cost,account_id=%v,account_name=%v,service_name=%v%v cost=%v %v\n", s.AccountID, accountName, s.ServiceName, accountTags, s.ServiceCost, s.Timestamp)
+				if ok, accountName, accountTags := checkElementInArray(c, s.SecondGroupKey); ok {
+					printToOutput(
+						"aws_cost,%v=%v,account_name=%v,%v=%v%v cost=%v %v",
+						groupDefinitionLabels[1].Label,
+						s.SecondGroupKey,
+						accountName,
+						groupDefinitionLabels[0].Label,
+						s.FirstGroupKey,
+						globalTagsString+accountTags,
+						s.ServiceCost,
+						s.Timestamp)
 				} else {
-					fmt.Fprintf(resultFile, "aws-cost,account_id=%v,account_name=%v,service_name=%v cost=%v %v\n", s.AccountID, accountName, s.ServiceName, s.ServiceCost, s.Timestamp)
+					printToOutput(
+						"aws_cost,%v=%v,account_name=%v,%v=%v%v cost=%v %v",
+						groupDefinitionLabels[1].Label,
+						s.SecondGroupKey,
+						accountName,
+						groupDefinitionLabels[0].Label,
+						s.FirstGroupKey,
+						globalTagsString,
+						s.ServiceCost,
+						s.Timestamp)
 				}
 			}
 		}
@@ -262,10 +366,10 @@ func checkElementInArray(config Config, element string) (bool, string, string) {
 	return false, "", ""
 }
 
-func getStringWithTags(accountTags map[string]string) string {
+func getStringWithTags(inputTags map[string]string) string {
 	tags := ""
-	for tag := range accountTags {
-		tags += fmt.Sprintf(",%s=%s", tag, accountTags[tag])
+	for tag := range inputTags {
+		tags += fmt.Sprintf(",%s=%s", tag, inputTags[tag])
 	}
 
 	ret := strings.Replace(tags, " ", "_", -1)
@@ -277,12 +381,15 @@ func main() {
 	var c Config
 	var err error
 	defer resultFile.Close()
-
 	if configFile != "" {
 		c, err = loadConfig(configFile)
 		if err != nil {
 			log.Fatal(err)
 		}
+	}
+
+	if influxUrl != "" {
+		defer client.Close()
 	}
 
 	data, err := getDataFromAWS(&settings{
