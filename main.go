@@ -1,51 +1,51 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
-	"log"
-	"os"
-	"context"
-	"strconv"
-	"strings"
-	"time"
-	"reflect"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/costexplorer"
 	"github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
 	"github.com/influxdata/influxdb-client-go/v2"
 	"github.com/influxdata/influxdb-client-go/v2/api"
+	"io/ioutil"
+	"log"
+	"os"
+	"reflect"
+	"strconv"
+	"strings"
+	"time"
 )
 
 var (
-	date       				string
-	keyID      				string
-	secretKey  				string
-	configFile 				string
-	resultPath 				string
-	exact      				bool
-	logLevel   				string
-	region					string
-	tagsList   				[]string
-	globalTags				map[string]string
-	groupDefinitionLabels	[]groupDefinitionLabel
-	defaultTag = 			"Unknown"
-	client 				    influxdb2.Client
-	writeAPI				api.WriteAPIBlocking
-	influxUrl				string
+	date                  string
+	keyID                 string
+	secretKey             string
+	configFile            string
+	resultPath            string
+	exact                 bool
+	logLevel              string
+	region                string
+	tagsList              []string
+	globalTags            map[string]string
+	groupDefinitionLabels []groupDefinitionLabel
+	defaultTag            = "Unknown"
+	client                influxdb2.Client
+	writeAPI              api.WriteAPIBlocking
+	influxUrl             string
 
-	resultFile  			*os.File
-	debugLogger 			*log.Logger
-	traceLogger 			*log.Logger
-	filter					types.Expression
+	resultFile  *os.File
+	debugLogger *log.Logger
+	traceLogger *log.Logger
+	filter      types.Expression
 )
 
 type settings struct {
-	AWSKeyID     			string `json:"aws_key_id,omitempty"`
-	AWSSecretKey 			string `json:"aws_secret_key,omitempty"`
-	Date         			string `json:"date"`
+	AWSKeyID     string `json:"aws_key_id,omitempty"`
+	AWSSecretKey string `json:"aws_secret_key,omitempty"`
+	Date         string `json:"date"`
 }
 
 type Config struct {
@@ -54,21 +54,21 @@ type Config struct {
 		ID   string            `json:"id"`
 		Tags map[string]string `json:"tags,omitempty"`
 	} `json:"accounts"`
-	Filter types.Expression `json:"filter,omitempty"`
-	Group []groupDefinitionLabel `json:"group,omitempty"`
-	GlobalTags map[string]string `json:"tags,omitempty"`
+	Filter     types.Expression       `json:"filter,omitempty"`
+	Group      []groupDefinitionLabel `json:"group,omitempty"`
+	GlobalTags map[string]string      `json:"tags,omitempty"`
 }
 
 type serviceCost struct {
-	SecondGroupKey   string `json:"second_group_key"`
-	FirstGroupKey string `json:"first_group_key"`
-	ServiceCost string `json:"service_cost"`
-	Timestamp   string `json:"timestamp"`
+	SecondGroupKey string `json:"second_group_key"`
+	FirstGroupKey  string `json:"first_group_key"`
+	ServiceCost    string `json:"service_cost"`
+	Timestamp      string `json:"timestamp"`
 }
 
 type groupDefinitionLabel struct {
-	GroupId   	string `json:"group_id"`
-	Label		string `json:"label"`
+	GroupId string `json:"group_id"`
+	Label   string `json:"label"`
 }
 
 func init() {
@@ -94,15 +94,15 @@ func init() {
 	}
 
 	if keyID != "" {
-		os.Setenv("AWS_ACCESS_KEY_ID",keyID)
+		os.Setenv("AWS_ACCESS_KEY_ID", keyID)
 	}
 
 	if secretKey != "" {
-		os.Setenv("AWS_SECRET_ACCESS_KEY",secretKey)
+		os.Setenv("AWS_SECRET_ACCESS_KEY", secretKey)
 	}
 
 	if region != "" {
-		os.Setenv("AWS_REGION",region)
+		os.Setenv("AWS_REGION", region)
 	}
 
 	if date == "" {
@@ -125,14 +125,14 @@ func init() {
 		}
 	}
 
-	groupDefinitionLabels = make([]groupDefinitionLabel,2)
+	groupDefinitionLabels = make([]groupDefinitionLabel, 2)
 	groupDefinitionLabels[0] = groupDefinitionLabel{
 		GroupId: "SERVICE",
-		Label: "service_name",
+		Label:   "service_name",
 	}
 	groupDefinitionLabels[1] = groupDefinitionLabel{
 		GroupId: "LINKED_ACCOUNT",
-		Label: "account_id",
+		Label:   "account_id",
 	}
 
 	filter = types.Expression{}
@@ -170,7 +170,7 @@ func loadConfig(path string) (Config, error) {
 			}
 		}
 	}
-	if ! reflect.DeepEqual(types.Expression{}, c.Filter) {
+	if !reflect.DeepEqual(types.Expression{}, c.Filter) {
 		filter = c.Filter
 	}
 	if len(c.GlobalTags) != 0 {
@@ -200,7 +200,6 @@ func addTags(tag string) bool {
 	return true
 }
 
-
 func getDataFromAWS(a *settings) (*[]types.ResultByTime, error) {
 	var err error
 	var ctx = context.TODO()
@@ -229,7 +228,7 @@ func getDataFromAWS(a *settings) (*[]types.ResultByTime, error) {
 			End:   &end,
 		},
 	}
-	if ! reflect.DeepEqual(types.Expression{}, filter) {
+	if !reflect.DeepEqual(types.Expression{}, filter) {
 		caui.Filter = &filter
 	}
 
@@ -243,8 +242,8 @@ func getDataFromAWS(a *settings) (*[]types.ResultByTime, error) {
 	return &data.ResultsByTime, err
 }
 
-func cleanString(s string) string{
-	return strings.Replace(strings.Replace(s," ","_",-1),"_-_","_",-1)
+func cleanString(s string) string {
+	return strings.Replace(strings.Replace(s, " ", "_", -1), "_-_", "_", -1)
 }
 
 func getServiceCost(results *[]types.ResultByTime) []serviceCost {
@@ -255,10 +254,10 @@ func getServiceCost(results *[]types.ResultByTime) []serviceCost {
 	for _, timePeriod := range *results {
 		for _, group := range timePeriod.Groups {
 			sc = append(sc, serviceCost{
-				SecondGroupKey:   cleanString(group.Keys[1]),
-				FirstGroupKey: cleanString(group.Keys[0]),
-				ServiceCost: *group.Metrics["UnblendedCost"].Amount,
-				Timestamp:   timestamp,
+				SecondGroupKey: cleanString(group.Keys[1]),
+				FirstGroupKey:  cleanString(group.Keys[0]),
+				ServiceCost:    *group.Metrics["UnblendedCost"].Amount,
+				Timestamp:      timestamp,
 			})
 		}
 	}
@@ -268,14 +267,14 @@ func getServiceCost(results *[]types.ResultByTime) []serviceCost {
 func printToOutput(tpl string, params ...string) {
 	tmp := make([]interface{}, len(params))
 	for i, val := range params {
-        tmp[i] = val
-    }
+		tmp[i] = val
+	}
 	if influxUrl != "" {
 		line := fmt.Sprintf(tpl, tmp...)
 		err := writeAPI.WriteRecord(context.Background(), line)
 		if err != nil {
-            panic(err)
-        }
+			panic(err)
+		}
 	} else {
 		fmt.Fprintf(resultFile, tpl+"\n", tmp...)
 	}
@@ -397,7 +396,6 @@ func main() {
 		AWSKeyID:     keyID,
 		AWSSecretKey: secretKey,
 		Date:         date,
-
 	})
 	if err != nil {
 		log.Fatal(err)
